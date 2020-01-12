@@ -704,42 +704,63 @@ object StmPriorityQueue extends App {
                                   map: TMap[Int, TQueue[A]]) {
     def offer(a: A, priority: Int): STM[Nothing, Unit] =
       for {
-        o <- map.get(priority)
-        q <- o.fold(makeQueue)(STM.succeed)
-        _ <- q.offer(a)
-        _ <- map.put(priority, q)
-        l <- minLevel.get
-        _ <- if (l > priority) minLevel.set(priority) else STM.unit
+        min <- minLevel.get
+        _ <- (if (priority < min) minLevel.set(priority)
+              else STM.unit)
+        _ <- createOrInsertExisting(priority, a, map)
       } yield ()
 
-    def take: STM[Nothing, A] =
-      for {
-        idx <- minLevel.get
-        qa <- map.get(idx).collect { case Some(qa) => qa }
-        a <- qa.take
-        s <- qa.size
-        _ <- if (s == 0) setNextMinLevel else STM.unit
-      } yield a
+    private def createOrInsertExisting(
+      incomingPriority: Int,
+      value: A,
+      map: TMap[Int, TQueue[A]]
+    ): STM[Nothing, Unit] =
+      map.get(incomingPriority).flatMap {
+        case Some(queue) =>
+          queue.offer(value)
 
-    private def setNextMinLevel: STM[Nothing, Unit] =
-      for {
-        idx <- minLevel.get
-        _ <- map.delete(idx)
-        mm <- map.keys
-        min <- if (mm.isEmpty) STM.retry else STM.succeed(mm.min)
-        _ <- minLevel.set(min)
-      } yield ()
+        case None =>
+          for {
+            queue <- TQueue.make[A](Int.MaxValue)
+            _ <- queue.offer(value)
+            _ <- map.put(incomingPriority, queue)
+          } yield ()
+      }
 
-    private def makeQueue: STM[Nothing, TQueue[A]] =
-      TQueue.make[A](Int.MaxValue)
+    def take: STM[Nothing, A] = takeHighestPriority(minLevel, map)
+
+    private def takeHighestPriority(
+      minLevel: TRef[Int],
+      map: TMap[Int, TQueue[A]]
+    ): STM[Nothing, A] =
+      minLevel.get.flatMap { min =>
+        map.get(min).flatMap {
+          case None =>
+            STM.retry
+
+          case Some(queue) =>
+            for {
+              a <- queue.take
+              size <- queue.size
+              _ <- (if (size > 0) STM.succeed(())
+                    else map.delete(min) *> pickNewMin(minLevel, map))
+            } yield a
+        }
+      }
+
+    private def pickNewMin(minLevel: TRef[Int],
+                           map: TMap[Int, TQueue[A]]): STM[Nothing, Unit] =
+      map.keys
+        .map {
+          case Nil  => Int.MaxValue
+          case list => list.min
+        }
+        .flatMap(minLevel.set)
   }
-
   object PriorityQueue {
     def make[A]: STM[Nothing, PriorityQueue[A]] =
-      for {
-        tref <- TRef.make(Int.MaxValue)
-        map <- TMap.empty[Int, TQueue[A]]
-      } yield new PriorityQueue(tref, map)
+      (TRef.make[Int](Int.MaxValue) zip TMap.empty[Int, TQueue[A]])
+        .map { case (ref, map) => new PriorityQueue(ref, map) }
   }
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, Int] =
