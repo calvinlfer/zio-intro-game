@@ -12,51 +12,48 @@ object WorkshopSpec
       import TicTacToe._
       import BoardHelpers._
 
-      suite("Workshop tests")(
-        testM("HelloWorld") {
-          for {
-            value <- HelloWorld.run(Nil)
-            output <- TestConsole.output
-          } yield
-            assert(value, equalTo(0)) &&
-              assert(output, equalTo(Vector("Hello World!\n")))
-        },
-        testM("ErrorRecovery") {
-          assertM(ErrorRecovery.run(Nil), equalTo(1))
-        },
-        testM("PromptName") {
-          ZIO(assertCompletes)
-        } @@ ignore,
-        testM("AlarmApp") {
-          ZIO(assertCompletes)
-        } @@ ignore,
-        suite("Board")(
-          test("won horizontal first") {
-            horizontalFirst(Mark.X) && horizontalFirst(Mark.O)
-          },
-          test("won horizontal second") {
-            horizontalSecond(Mark.X) && horizontalSecond(Mark.O)
-          },
-          test("won horizontal third") {
-            horizontalThird(Mark.X) && horizontalThird(Mark.O)
-          },
-          test("won vertical first") {
-            verticalFirst(Mark.X) && verticalFirst(Mark.O)
-          },
-          test("won vertical second") {
-            verticalSecond(Mark.X) && verticalSecond(Mark.O)
-          },
-          test("won vertical third") {
-            verticalThird(Mark.X) && verticalThird(Mark.O)
-          },
-          test("won diagonal first") {
-            diagonalFirst(Mark.X) && diagonalFirst(Mark.O)
-          },
-          test("won diagonal second") {
-            diagonalSecond(Mark.X) && diagonalSecond(Mark.O)
-          }
-        )
-      )
+      suite("Workshop tests")(testM("HelloWorld") {
+        for {
+          value <- HelloWorld.run(Nil)
+          output <- TestConsole.output
+        } yield
+          assert(value, equalTo(0)) &&
+            assert(output, equalTo(Vector("Hello World!\n")))
+      }, testM("ErrorRecovery") {
+        assertM(ErrorRecovery.run(Nil), equalTo(1))
+      }, testM("Looping") {
+        for {
+          _ <- Looping.run(Nil)
+          output <- TestConsole.output
+        } yield
+          assert(
+            output.toList,
+            forall(equalTo("All work and no play makes Jack a dull boy\n"))
+          ) &&
+            assert(output.length, equalTo(100)) &&
+            assertCompletes
+
+      }, testM("PromptName") {
+        ZIO(assertCompletes)
+      } @@ ignore, testM("AlarmApp") {
+        ZIO(assertCompletes)
+      } @@ ignore, suite("Board")(test("won horizontal first") {
+        horizontalFirst(Mark.X) && horizontalFirst(Mark.O)
+      }, test("won horizontal second") {
+        horizontalSecond(Mark.X) && horizontalSecond(Mark.O)
+      }, test("won horizontal third") {
+        horizontalThird(Mark.X) && horizontalThird(Mark.O)
+      }, test("won vertical first") {
+        verticalFirst(Mark.X) && verticalFirst(Mark.O)
+      }, test("won vertical second") {
+        verticalSecond(Mark.X) && verticalSecond(Mark.O)
+      }, test("won vertical third") {
+        verticalThird(Mark.X) && verticalThird(Mark.O)
+      }, test("won diagonal first") {
+        diagonalFirst(Mark.X) && diagonalFirst(Mark.O)
+      }, test("won diagonal second") {
+        diagonalSecond(Mark.X) && diagonalSecond(Mark.O)
+      }))
     })
 
 object BoardHelpers {
