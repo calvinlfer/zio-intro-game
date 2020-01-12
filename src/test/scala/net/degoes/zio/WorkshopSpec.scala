@@ -32,12 +32,21 @@ object WorkshopSpec
           ) &&
             assert(output.length, equalTo(100)) &&
             assertCompletes
-
       }, testM("PromptName") {
         ZIO(assertCompletes)
       } @@ ignore, testM("AlarmApp") {
         ZIO(assertCompletes)
-      } @@ ignore, suite("Board")(test("won horizontal first") {
+      } @@ ignore, suite("StmPriorityQueue") {
+        testM("Enqueueing an element and removing it should succeed") {
+          import StmPriorityQueue._
+          for {
+            q <- PriorityQueue.make[String].commit
+            element = "First"
+            _ <- q.offer(element, priority = 0).commit
+            retrieved <- q.take.commit
+          } yield assert(retrieved, equalTo(element)) && assertCompletes
+        }
+      }, suite("Board")(test("won horizontal first") {
         horizontalFirst(Mark.X) && horizontalFirst(Mark.O)
       }, test("won horizontal second") {
         horizontalSecond(Mark.X) && horizontalSecond(Mark.O)
