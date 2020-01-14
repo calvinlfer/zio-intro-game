@@ -843,20 +843,36 @@ object Sharding extends App {
    * Create N workers reading from a Queue, if one of them fails, then wait
    * for the other ones to process their current item, but terminate all the
    * workers.
+   * NOTE: This solution is most likely incorrect
    */
-  def shard[R, E, A](queue: Queue[A], n: Int, worker: A => ZIO[R, E, Unit]): ZIO[R, E, Nothing] = ???
-//    Promise.make[E, Unit].flatMap { p =>
-//      ZIO.foreachPar_(0 to n) { _ =>
-//        val program: UIO[Unit] =
-//          queue.take.either.flatMap {
-//            case Left(_)  => p.succeed(()).unit
-//            case Right(_) => program
-//          }
-//        program
-//      }
-//    }
+  def shard[R, E, A](queue: Queue[A], n: Int, worker: A => ZIO[R, E, Unit]): ZIO[R, E, Nothing] = {
+    def program(p: Promise[Nothing, E]): ZIO[R, E, Nothing] = queue.take.flatMap(worker).either.flatMap {
+      case Left(e) =>
+        p.succeed(e) *> ZIO.fail(e)
 
-  def run(args: List[String]) = ???
+      case Right(_) =>
+        // if the promise is empty then it means there are no failures
+        p.poll.flatMap(_.fold(ifEmpty = program(p))(_.flatMap(ZIO.fail)))
+    }
+
+    Promise.make[Nothing, E].flatMap { p =>
+      ZIO
+        .foreachPar(0 to n) { _ =>
+          program(p)
+        }
+        .map(_.head)
+    }
+  }
+
+  def worker(i: Int): ZIO[Any, String, Unit] =
+    if (i == 5) ZIO.fail("boom!") else ZIO.unit
+
+  def run(args: List[String]) =
+    (for {
+      q <- Queue.bounded[Int](32)
+      _ <- q.offerAll(0 to 10)
+      _ <- shard(q, 3, worker)
+    } yield ()).as(0).catchAll(_ => ZIO.succeed(1))
 }
 
 object Hangman extends App {
