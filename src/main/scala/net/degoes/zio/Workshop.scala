@@ -4,6 +4,7 @@ import zio._
 import java.text.NumberFormat
 import java.util.concurrent.TimeUnit
 
+import zio.clock.Clock
 import zio.duration.Duration
 import zio.random.Random
 
@@ -627,14 +628,14 @@ object StmLunchTime extends App {
 
     def takeSeat(index: Int): STM[Nothing, Unit] =
       for {
-        seatTaken <- seats.array(index).get
+        seatTaken <- seats(index)
         _         <- STM.check(!seatTaken)
         _         <- seats.array(index).set(true)
       } yield ()
 
     def vacateSeat(index: Int): STM[Nothing, Unit] =
       for {
-        seatTaken <- seats.array(index).get
+        seatTaken <- seats(index)
         _         <- STM.check(seatTaken)
         _         <- seats.array(index).set(false)
       } yield ()
@@ -645,23 +646,34 @@ object StmLunchTime extends App {
    *
    * Using STM, implement a method that feeds a single attendee.
    */
-  def feedAttendee(t: Table, a: Attendee): STM[Nothing, Unit] =
-    for {
+  def feedAttendee(t: Table, a: Attendee): ZIO[Console with Clock with Random, Nothing, Unit] = {
+    import zio.duration._
+    // find an empty seat and take it in a single transaction
+    val findAndTakeSeat = (for {
       index <- t.findEmptySeat.collect { case Some(index) => index }
-      _     <- t.takeSeat(index) *> a.feed *> t.vacateSeat(index)
+      _     <- t.takeSeat(index)
+    } yield index).commit
+
+    // everybody takes some time to eat before feeling full and giving up their seat
+    for {
+      seat     <- findAndTakeSeat
+      sleepSec <- random.nextInt(5)
+      _        <- putStrLn(s"Attendee $a is eating at seat $seat") *> ZIO.sleep(sleepSec.seconds) *> a.feed.commit
+      _        <- t.vacateSeat(seat).commit
     } yield ()
+  }
 
   /**
    * EXERCISE 24
    *
    * Using STM, implement a method that feeds only the starving attendees.
    */
-  def feedStarving(table: Table, list: List[Attendee]): UIO[Unit] =
-    UIO.foreachPar_(list) { attendee =>
-      (for {
-        starving <- attendee.isStarving
-        _        <- if (starving) feedAttendee(table, attendee) else STM.unit
-      } yield ()).commit
+  def feedStarving(table: Table, list: List[Attendee]): ZIO[zio.ZEnv, Nothing, Unit] =
+    ZIO.foreachPar_(list) { attendee =>
+      attendee.isStarving.commit.flatMap {
+        case true  => feedAttendee(table, attendee)
+        case false => ZIO.unit
+      }
     }
 
   def makeEmptyTable(size: Int): STM[Nothing, Table] = TArray.fromIterable(List.fill(size)(false)).map(Table)
@@ -836,6 +848,7 @@ object StmReentrantLock extends App {
 }
 
 object Sharding extends App {
+  import zio.console._
 
   /**
    * EXERCISE 27
@@ -851,28 +864,27 @@ object Sharding extends App {
         p.succeed(e) *> ZIO.fail(e)
 
       case Right(_) =>
-        // if the promise is empty then it means there are no failures
+        // if the promise is empty then it means there are no failures so we continue repeating
         p.poll.flatMap(_.fold(ifEmpty = program(p))(_.flatMap(ZIO.fail)))
     }
 
     Promise.make[Nothing, E].flatMap { p =>
       ZIO
-        .foreachPar(0 to n) { _ =>
-          program(p)
-        }
-        .map(_.head)
+        .foreach(0 to n)(_ => program(p).fork)
+        .map(_.reduce[Fiber[E, Nothing]]((f1, f2) => f1 *> f2)) // fiber composition
+        .flatMap(_.join)
     }
   }
 
   def worker(i: Int): ZIO[Any, String, Unit] =
     if (i == 5) ZIO.fail("boom!") else ZIO.unit
 
-  def run(args: List[String]) =
+  def run(args: List[String]): ZIO[zio.ZEnv, Nothing, Int] =
     (for {
       q <- Queue.bounded[Int](32)
       _ <- q.offerAll(0 to 10)
       _ <- shard(q, 3, worker)
-    } yield ()).as(0).catchAll(_ => ZIO.succeed(1))
+    } yield ()).as(0).catchAllCause(cause => putStrLn(cause.prettyPrint).as(1))
 }
 
 object Hangman extends App {
